@@ -1,0 +1,153 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Raccourci Films</title>
+<style>
+*{box-sizing:border-box}
+body{margin:0;font-family:system-ui,sans-serif;background:#0f1115;color:#eee;padding-bottom:230px}
+header{position:sticky;top:0;background:#171a21;padding:10px;z-index:5;display:flex;gap:8px}
+input{background:#232733;border:1px solid #333a4a;color:#fff;border-radius:8px;padding:10px;font-size:16px;width:100%}
+button{background:#e50914;color:#fff;border:0;border-radius:8px;padding:10px 14px;font-size:15px;cursor:pointer}
+button.sec{background:#2d3345}
+#grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(140px,1fr));gap:10px;padding:10px}
+.card{background:#171a21;border-radius:10px;overflow:hidden;cursor:pointer;border:2px solid transparent}
+.card.sel{border-color:#e50914}
+.card img{width:100%;aspect-ratio:2/3;object-fit:cover;background:#232733;display:block}
+.card div{padding:6px 8px;font-size:13px}
+.id{color:#f5c518;font-weight:700}
+#more{display:block;margin:10px auto}
+#panel{position:fixed;left:0;right:0;bottom:0;background:#171a21;border-top:1px solid #333a4a;padding:12px;z-index:10}
+#panel label{font-size:12px;color:#9aa3b8;display:block;margin:6px 0 3px}
+.row{display:flex;gap:8px}
+#url{font-size:13px;word-break:break-all;color:#8fd3ff;margin:8px 0;min-height:18px}
+#setup{padding:14px;max-width:560px;margin:auto}
+.hide{display:none}
+small{color:#9aa3b8}
+</style>
+</head>
+<body>
+
+<header>
+  <input id="q" type="search" placeholder="Rechercher un film…">
+  <button class="sec" id="cfg">⚙️</button>
+</header>
+
+<div id="setup" class="hide">
+  <h3>Réglages</h3>
+  <label>Clé API TMDB (gratuite : themoviedb.org → Réglages → API)</label>
+  <input id="key" placeholder="Clé API (v3) ou jeton (v4)">
+  <label>Ton lien, avec {id} à l'endroit du numéro</label>
+  <input id="tpl" placeholder="https://tonsite.com/movie/{id}">
+  <small>Si tu n'écris pas {id}, le numéro est ajouté à la fin après un « / ».</small><br><br>
+  <button id="save">Enregistrer</button>
+</div>
+
+<div id="grid"></div>
+<button class="sec hide" id="more">Voir plus</button>
+
+<div id="panel">
+  <div id="sel"><small>Touche un film pour le choisir.</small></div>
+  <div id="url"></div>
+  <div class="row">
+    <button id="open" disabled>▶ Ouvrir</button>
+    <button class="sec" id="copy" disabled>Copier le lien</button>
+  </div>
+</div>
+
+<script>
+const $=id=>document.getElementById(id);
+const DEFAULT_KEY="",DEFAULT_TPL="https://vidzy.org/movie/{id}";
+let key=DEFAULT_KEY,tpl=DEFAULT_TPL,page=1,mode="popular",query="",current=null,url="";
+try{key=localStorage.getItem("tmdbKey")||DEFAULT_KEY;tpl=localStorage.getItem("tpl")||DEFAULT_TPL}catch(e){}
+
+function api(path,params){
+  const u=new URL("https://api.themoviedb.org/3"+path);
+  u.searchParams.set("language","fr-FR");
+  for(const k in params)u.searchParams.set(k,params[k]);
+  const opt={};
+  if(key.length>40)opt.headers={Authorization:"Bearer "+key};
+  else u.searchParams.set("api_key",key);
+  return fetch(u.toString(),opt).then(r=>{if(!r.ok)throw new Error(r.status);return r.json()});
+}
+
+function buildUrl(id){
+  let t=tpl.trim();
+  if(!t)return "";
+  if(!/^https?:\/\//i.test(t))t="https://"+t;
+  return t.includes("{id}")?t.replace("{id}",id):t.replace(/\/+$/,"")+"/"+id;
+}
+
+function select(m,el){
+  current=m;
+  document.querySelectorAll(".card.sel").forEach(c=>c.classList.remove("sel"));
+  el.classList.add("sel");
+  url=buildUrl(m.id);
+  $("sel").textContent="";
+  const b=document.createElement("b");b.textContent=m.title;
+  const s=document.createElement("span");s.className="id";s.textContent="  N° "+m.id;
+  $("sel").append(b,s);
+  $("url").textContent=url||"Renseigne ton lien dans ⚙️";
+  $("open").disabled=$("copy").disabled=!url;
+}
+
+function render(list){
+  list.forEach(m=>{
+    const c=document.createElement("div");c.className="card";
+    const img=document.createElement("img");img.loading="lazy";
+    if(m.poster_path)img.src="https://image.tmdb.org/t/p/w342"+m.poster_path;
+    const d=document.createElement("div");
+    const t=document.createElement("div");t.textContent=m.title+(m.release_date?" ("+m.release_date.slice(0,4)+")":"");
+    const i=document.createElement("div");i.className="id";i.textContent="N° "+m.id;
+    d.append(t,i);c.append(img,d);
+    c.onclick=()=>select(m,c);
+    $("grid").append(c);
+  });
+}
+
+async function load(reset){
+  if(!key){$("setup").classList.remove("hide");return}
+  if(reset){page=1;$("grid").textContent=""}
+  try{
+    const data=mode==="search"
+      ?await api("/search/movie",{query,page})
+      :await api("/movie/popular",{page});
+    render(data.results);
+    $("more").classList.toggle("hide",page>=data.total_pages);
+  }catch(e){
+    $("more").classList.add("hide");
+    $("grid").textContent="Erreur TMDB ("+e.message+"). Vérifie ta clé dans ⚙️.";
+  }
+}
+
+let timer;
+$("q").oninput=e=>{
+  clearTimeout(timer);
+  timer=setTimeout(()=>{
+    query=e.target.value.trim();
+    mode=query?"search":"popular";
+    load(true);
+  },400);
+};
+$("more").onclick=()=>{page++;load(false)};
+$("cfg").onclick=()=>{
+  $("key").value=key;$("tpl").value=tpl;
+  $("setup").classList.toggle("hide");
+};
+$("save").onclick=()=>{
+  key=$("key").value.trim();tpl=$("tpl").value.trim();
+  try{localStorage.setItem("tmdbKey",key);localStorage.setItem("tpl",tpl)}catch(e){}
+  $("setup").classList.add("hide");
+  if(current){url=buildUrl(current.id);$("url").textContent=url;$("open").disabled=$("copy").disabled=!url}
+  load(true);
+};
+$("open").onclick=()=>{if(url)window.open(url,"_blank","noopener")};
+$("copy").onclick=async()=>{
+  try{await navigator.clipboard.writeText(url);$("copy").textContent="Copié ✓"}catch(e){$("copy").textContent="Copie impossible"}
+  setTimeout(()=>$("copy").textContent="Copier le lien",1500);
+};
+load(true);
+</script>
+</body>
+</html>
